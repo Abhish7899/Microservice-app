@@ -3,12 +3,19 @@ const logger = require('./logger');
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/tasks_db';
 
-const pool = new Pool({
+const poolConfig = {
   connectionString,
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 30000,
   max: 10,
-});
+};
+
+// Enable SSL with self-signed / RDS certificate support when DB_SSL is set to true
+if (process.env.DB_SSL === 'true') {
+  poolConfig.ssl = { rejectUnauthorized: false };
+}
+
+const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
   logger.error('Unexpected error on idle PostgreSQL client', { error: err.message, stack: err.stack });
