@@ -35,3 +35,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Infrastructure repository
+Infrastructure-For-Microservices-App/
+Ansible-for-microservices/
