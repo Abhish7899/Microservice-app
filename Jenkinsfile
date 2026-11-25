@@ -53,6 +53,11 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
+                    env.FRONTEND_ECR_URL = sh(
+                        script: "aws ssm get-parameter --name /prod/app/ecr_frontend_repo_url --query 'Parameter.Value' --output text --region ${AWS_REGION}",
+                        returnStdout: true
+                    ).trim()
+
                     // Resolve RDS PostgreSQL Endpoint from SSM
                     env.RDS_ENDPOINT = sh(
                         script: "aws ssm get-parameter --name /prod/app/rds_endpoint --query 'Parameter.Value' --output text --region ${AWS_REGION}",
@@ -83,8 +88,9 @@ pipeline {
                     env.ECR_REGISTRY = env.TASK_ECR_URL.tokenize('/')[0]
 
                     echo "Discovered Metadata:"
-                    echo " - task-service ECR : ${env.TASK_ECR_URL}"
-                    echo " - stats-service ECR: ${env.STATS_ECR_URL}"
+                    echo " - task-service ECR    : ${env.TASK_ECR_URL}"
+                    echo " - stats-service ECR   : ${env.STATS_ECR_URL}"
+                    echo " - frontend-service ECR: ${env.FRONTEND_ECR_URL}"
                     echo " - ECR Registry Host: ${env.ECR_REGISTRY}"
                     echo " - RDS Endpoint     : ${env.RDS_ENDPOINT}"
                     echo " - ALB Public DNS   : ${env.ALB_DNS}"
@@ -136,6 +142,17 @@ pipeline {
                             sh """
                                 docker build -t ${env.STATS_ECR_URL}:${IMAGE_TAG} ./stats-service
                                 docker push ${env.STATS_ECR_URL}:${IMAGE_TAG}
+                            """
+                        }
+                    }
+                }
+                stage('Build & Push frontend-service') {
+                    steps {
+                        script {
+                            echo "Building and tagging frontend-service image: ${env.FRONTEND_ECR_URL}:${IMAGE_TAG}"
+                            sh """
+                                docker build -t ${env.FRONTEND_ECR_URL}:${IMAGE_TAG} ./frontend-service
+                                docker push ${env.FRONTEND_ECR_URL}:${IMAGE_TAG}
                             """
                         }
                     }
@@ -282,6 +299,7 @@ EOF
                         # Substitute image placeholders with exact ECR immutable URIs
                         sed -i 's|TASK_IMAGE_PLACEHOLDER|${env.TASK_ECR_URL}:${IMAGE_TAG}|g' /tmp/k8s-rendered/task-service.yaml
                         sed -i 's|STATS_IMAGE_PLACEHOLDER|${env.STATS_ECR_URL}:${IMAGE_TAG}|g' /tmp/k8s-rendered/stats-service.yaml
+                        sed -i 's|FRONTEND_IMAGE_PLACEHOLDER|${env.FRONTEND_ECR_URL}:${IMAGE_TAG}|g' /tmp/k8s-rendered/frontend-service.yaml
 
                         echo "Creating compressed base64 payload of rendered manifests..."
                         MANIFEST_PAYLOAD=\$(tar -czf - -C /tmp/k8s-rendered . | base64 | tr -d '\n')
@@ -296,9 +314,11 @@ EOF
     "kubectl apply -f /tmp/k8s-deploy/configmap.yaml",
     "kubectl apply -f /tmp/k8s-deploy/task-service.yaml",
     "kubectl apply -f /tmp/k8s-deploy/stats-service.yaml",
+    "kubectl apply -f /tmp/k8s-deploy/frontend-service.yaml",
     "kubectl apply -f /tmp/k8s-deploy/ingress.yaml",
     "kubectl rollout status deployment/task-service -n ${K8S_NAMESPACE} --timeout=180s",
     "kubectl rollout status deployment/stats-service -n ${K8S_NAMESPACE} --timeout=180s",
+    "kubectl rollout status deployment/frontend-service -n ${K8S_NAMESPACE} --timeout=180s",
     "rm -rf /tmp/k8s-deploy"
   ]
 }
@@ -360,7 +380,7 @@ EOF
                 script {
                     echo "Running smoke tests against Public ALB DNS: ${env.ALB_DNS}..."
                     sh """
-                        echo "[1/3] Verifying ALB Target Group health check endpoint (/healthz)..."
+                        echo "[1/4] Verifying ALB Target Group health check endpoint (/healthz)..."
                         ALB_HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" --retry 5 --retry-delay 5 --max-time 10 "http://${env.ALB_DNS}/healthz")
                         echo "ALB /healthz HTTP Response Code: \$ALB_HEALTH"
                         if [ "\$ALB_HEALTH" != "200" ]; then
@@ -368,7 +388,15 @@ EOF
                             exit 1
                         fi
 
-                        echo "[2/3] Testing task-service API endpoint (/api/tasks)..."
+                        echo "[2/4] Testing frontend-service UI root endpoint (/)..."
+                        FRONTEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" --retry 5 --retry-delay 5 --max-time 10 "http://${env.ALB_DNS}/")
+                        echo "GET / HTTP Response Code: \$FRONTEND_STATUS"
+                        if [ "\$FRONTEND_STATUS" != "200" ]; then
+                            echo "[ERROR] frontend-service UI did not return 200 OK"
+                            exit 1
+                        fi
+
+                        echo "[3/4] Testing task-service API endpoint (/api/tasks)..."
                         TASKS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" --retry 5 --retry-delay 5 --max-time 10 "http://${env.ALB_DNS}/api/tasks")
                         echo "GET /api/tasks HTTP Response Code: \$TASKS_STATUS"
                         if [ "\$TASKS_STATUS" != "200" ]; then
@@ -376,7 +404,7 @@ EOF
                             exit 1
                         fi
 
-                        echo "[3/3] Testing stats-service API endpoint (/api/stats)..."
+                        echo "[4/4] Testing stats-service API endpoint (/api/stats)..."
                         STATS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" --retry 5 --retry-delay 5 --max-time 10 "http://${env.ALB_DNS}/api/stats")
                         echo "GET /api/stats HTTP Response Code: \$STATS_STATUS"
                         if [ "\$STATS_STATUS" != "200" ]; then
@@ -405,7 +433,8 @@ EOF
   "commands": [
     "export KUBECONFIG=/etc/kubernetes/admin.conf",
     "kubectl rollout undo deployment/task-service -n ${K8S_NAMESPACE} || true",
-    "kubectl rollout undo deployment/stats-service -n ${K8S_NAMESPACE} || true"
+    "kubectl rollout undo deployment/stats-service -n ${K8S_NAMESPACE} || true",
+    "kubectl rollout undo deployment/frontend-service -n ${K8S_NAMESPACE} || true"
   ]
 }
 EOF

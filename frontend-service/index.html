@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microservices Task & Stats Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --border-color: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-blue-hover: #2563eb;
+            --accent-green: #10b981;
+            --accent-green-bg: rgba(16, 185, 129, 0.15);
+            --accent-amber: #f59e0b;
+            --accent-amber-bg: rgba(245, 158, 11, 0.15);
+            --accent-red: #ef4444;
+            --accent-red-bg: rgba(239, 68, 68, 0.15);
+            --accent-purple: #8b5cf6;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            --radius-md: 8px;
+            --radius-lg: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            padding: 24px 16px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header-title h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title p {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .header-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background-color: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.7; }
+            50% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.7; }
+        }
+
+        /* Banner Notification */
+        .banner {
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.875rem;
+        }
+
+        .banner.error {
+            display: flex;
+            background-color: var(--accent-red-bg);
+            border: 1px solid var(--accent-red);
+            color: #fca5a5;
+        }
+
+        .banner.success {
+            display: flex;
+            background-color: var(--accent-green-bg);
+            border: 1px solid var(--accent-green);
+            color: #86efac;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .stat-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            box-shadow: var(--shadow-md);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+        }
+
+        .stat-card.total::before { background-color: var(--accent-blue); }
+        .stat-card.completed::before { background-color: var(--accent-green); }
+        .stat-card.pending::before { background-color: var(--accent-amber); }
+        .stat-card.rate::before { background-color: var(--accent-purple); }
+
+        .stat-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-top: 8px;
+            color: var(--text-primary);
+        }
+
+        .stat-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Task Creation Section */
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: var(--shadow-md);
+            margin-bottom: 24px;
+        }
+
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .create-form {
+            display: flex;
+            gap: 12px;
+        }
+
+        .create-input {
+            flex: 1;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            color: var(--text-primary);
+            font-size: 0.9375rem;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .create-input:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 10px 18px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            border-radius: var(--radius-md);
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary {
+            background-color: var(--accent-blue);
+            color: #ffffff;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-blue-hover);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Task List */
+        .task-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+
+        .task-item:hover {
+            border-color: #475569;
+            background-color: rgba(15, 23, 42, 0.8);
+        }
+
+        .task-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .status-badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            flex-shrink: 0;
+        }
+
+        .status-badge.completed {
+            background-color: var(--accent-green-bg);
+            color: var(--accent-green);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+        }
+
+        .status-badge.pending {
+            background-color: var(--accent-amber-bg);
+            color: var(--accent-amber);
+            border: 1px solid rgba(245, 158, 11, 0.4);
+        }
+
+        .task-title {
+            font-size: 0.9375rem;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .task-item.is-completed .task-title {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+
+        .task-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
+        .task-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .btn-action {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-action:hover {
+            color: var(--text-primary);
+            border-color: #64748b;
+        }
+
+        .btn-action.toggle-complete:hover {
+            color: var(--accent-green);
+            border-color: var(--accent-green);
+        }
+
+        .btn-action.delete-btn:hover {
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 36px 16px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 36px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+
+        @media (max-width: 640px) {
+            .create-form {
+                flex-direction: column;
+            }
+            .task-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            .task-actions {
+                align-self: flex-end;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <h1>Task & Stats Microservices</h1>
+                <p>Stage 3 Multi-Tier Production Architecture</p>
+            </div>
+            <div class="header-badge">
+                <span class="live-dot"></span>
+                <span id="service-status">Live Connected</span>
+            </div>
+        </header>
+
+        <!-- Banner for Feedback / Errors -->
+        <div id="banner" class="banner">
+            <span id="banner-message">Notification message</span>
+            <button onclick="dismissBanner()" style="background: none; border: none; color: inherit; cursor: pointer; font-size: 1rem;">&times;</button>
+        </div>
+
+        <!-- Live Stats Overview -->
+        <section class="stats-grid">
+            <div class="stat-card total">
+                <span class="stat-label">Total Tasks</span>
+                <span class="stat-value" id="stat-total">--</span>
+                <span class="stat-meta">From stats-service (Python)</span>
+            </div>
+            <div class="stat-card completed">
+                <span class="stat-label">Completed</span>
+                <span class="stat-value" id="stat-completed" style="color: var(--accent-green);">--</span>
+                <span class="stat-meta">Status = completed</span>
+            </div>
+            <div class="stat-card pending">
+                <span class="stat-label">Pending</span>
+                <span class="stat-value" id="stat-pending" style="color: var(--accent-amber);">--</span>
+                <span class="stat-meta">Awaiting completion</span>
+            </div>
+            <div class="stat-card rate">
+                <span class="stat-label">Completion Rate</span>
+                <span class="stat-value" id="stat-rate" style="color: var(--accent-purple);">--</span>
+                <span class="stat-meta">Calculated metric</span>
+            </div>
+        </section>
+
+        <!-- Task Creation Card -->
+        <section class="card">
+            <div class="card-title">
+                <span>Create New Task</span>
+            </div>
+            <form id="create-task-form" class="create-form" onsubmit="handleCreateTask(event)">
+                <input
+                    type="text"
+                    id="new-task-title"
+                    class="create-input"
+                    placeholder="Enter task description (e.g., Configure Prometheus monitoring)..."
+                    required
+                    autocomplete="off"
+                />
+                <button type="submit" id="create-btn" class="btn btn-primary">
+                    <span>Add Task</span>
+                </button>
+            </form>
+        </section>
+
+        <!-- Tasks List Card -->
+        <section class="card">
+            <div class="card-title">
+                <span>All Tasks</span>
+                <span id="tasks-count" style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;"></span>
+            </div>
+            <ul id="task-list" class="task-list">
+                <div class="empty-state">Loading tasks from task-service...</div>
+            </ul>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            Self-Managed Kubernetes Cluster &bull; Microservices Architecture &bull; Ingress Routing via NGINX
+        </footer>
+    </div>
+
+    <script>
+        // Use strictly same-origin relative URLs to avoid CORS and ALB DNS hardcoding
+        const TASKS_API = '/api/tasks';
+        const STATS_API = '/api/stats';
+
+        function showBanner(message, type = 'error') {
+            const banner = document.getElementById('banner');
+            const msgEl = document.getElementById('banner-message');
+            banner.className = `banner ${type}`;
+            msgEl.textContent = message;
+            banner.style.display = 'flex';
+
+            if (type === 'success') {
+                setTimeout(dismissBanner, 4000);
+            }
+        }
+
+        function dismissBanner() {
+            document.getElementById('banner').style.display = 'none';
+        }
+
+        // Fetch Live Stats from stats-service
+        async function fetchStats() {
+            try {
+                const response = await fetch(STATS_API);
+                if (!response.ok) {
+                    throw new Error(`stats-service returned HTTP ${response.status}`);
+                }
+                const data = await response.json();
+
+                document.getElementById('stat-total').textContent = data.total_tasks ?? 0;
+                document.getElementById('stat-completed').textContent = data.completed_tasks ?? 0;
+                document.getElementById('stat-pending').textContent = data.pending_tasks ?? 0;
+
+                const rate = data.completion_rate !== undefined ? Math.round(data.completion_rate * 100) : 0;
+                document.getElementById('stat-rate').textContent = `${rate}%`;
+                document.getElementById('service-status').textContent = 'Live Connected';
+            } catch (err) {
+                console.error('Failed to fetch stats:', err);
+                document.getElementById('service-status').textContent = 'Stats Degraded';
+            }
+        }
+
+        // Fetch Live Tasks from task-service
+        async function fetchTasks() {
+            try {
+                const response = await fetch(TASKS_API);
+                if (!response.ok) {
+                    throw new Error(`task-service returned HTTP ${response.status}`);
+                }
+                const tasks = await response.json();
+                renderTasks(tasks);
+            } catch (err) {
+                console.error('Failed to fetch tasks:', err);
+                showBanner(`Unable to connect to task-service: ${err.message}`, 'error');
+                const listEl = document.getElementById('task-list');
+                listEl.innerHTML = `<div class="empty-state" style="color: var(--accent-red);">Failed to load tasks from backend.</div>`;
+            }
+        }
+
+        function renderTasks(tasks) {
+            const listEl = document.getElementById('task-list');
+            const countEl = document.getElementById('tasks-count');
+
+            if (!Array.isArray(tasks) || tasks.length === 0) {
+                listEl.innerHTML = `<div class="empty-state">No tasks recorded yet. Create one above to get started!</div>`;
+                countEl.textContent = '0 tasks';
+                return;
+            }
+
+            countEl.textContent = `${tasks.length} task${tasks.length === 1 ? '' : 's'}`;
+            listEl.innerHTML = '';
+
+            tasks.forEach(task => {
+                const isCompleted = task.status === 'completed';
+                const li = document.createElement('li');
+                li.className = `task-item ${isCompleted ? 'is-completed' : ''}`;
+
+                const createdDate = task.created_at ? new Date(task.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+                li.innerHTML = `
+                    <div class="task-content">
+                        <span class="status-badge ${isCompleted ? 'completed' : 'pending'}">${task.status}</span>
+                        <span class="task-title">${escapeHtml(task.title)}</span>
+                        ${createdDate ? `<span class="task-meta">${createdDate}</span>` : ''}
+                    </div>
+                    <div class="task-actions">
+                        <button
+                            class="btn-action toggle-complete"
+                            onclick="toggleTaskStatus(${task.id}, '${task.status}')"
+                            title="${isCompleted ? 'Mark as Pending' : 'Mark as Completed'}"
+                        >
+                            ${isCompleted ? 'Mark Pending' : 'Complete'}
+                        </button>
+                        <button
+                            class="btn-action delete-btn"
+                            onclick="deleteTask(${task.id})"
+                            title="Delete task"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                `;
+                listEl.appendChild(li);
+            });
+        }
+
+        async function handleCreateTask(event) {
+            event.preventDefault();
+            const input = document.getElementById('new-task-title');
+            const button = document.getElementById('create-btn');
+            const title = input.value.trim();
+
+            if (!title) return;
+
+            button.disabled = true;
+            try {
+                const response = await fetch(TASKS_API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, status: 'pending' })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.message || `HTTP ${response.status}`);
+                }
+
+                input.value = '';
+                showBanner('Task created successfully!', 'success');
+                await Promise.all([fetchTasks(), fetchStats()]);
+            } catch (err) {
+                console.error('Failed to create task:', err);
+                showBanner(`Failed to create task: ${err.message}`, 'error');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function toggleTaskStatus(id, currentStatus) {
+            const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+            try {
+                const response = await fetch(`${TASKS_API}/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: nextStatus })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.message || `HTTP ${response.status}`);
+                }
+
+                await Promise.all([fetchTasks(), fetchStats()]);
+            } catch (err) {
+                console.error('Failed to update task status:', err);
+                showBanner(`Failed to update task: ${err.message}`, 'error');
+            }
+        }
+
+        async function deleteTask(id) {
+            try {
+                const response = await fetch(`${TASKS_API}/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.message || `HTTP ${response.status}`);
+                }
+
+                showBanner('Task deleted.', 'success');
+                await Promise.all([fetchTasks(), fetchStats()]);
+            } catch (err) {
+                console.error('Failed to delete task:', err);
+                showBanner(`Failed to delete task: ${err.message}`, 'error');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial Load & Periodic Background Sync
+        async function init() {
+            await Promise.all([fetchTasks(), fetchStats()]);
+            // Refresh stats and tasks every 10 seconds
+            setInterval(() => {
+                fetchTasks();
+                fetchStats();
+            }, 10000);
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
