@@ -214,6 +214,7 @@ EOF
                         cat <<EOF > /tmp/ssm-secret-params.json
 {
   "commands": [
+    "export KUBECONFIG=/etc/kubernetes/admin.conf",
     "echo '\${B64_SECRET_MANIFEST}' | base64 -d | kubectl apply -f -"
   ]
 }
@@ -233,7 +234,7 @@ EOF
                         aws ssm wait command-executed \
                             --command-id "\$CMD_ID" \
                             --instance-id "${env.MASTER_INSTANCE_ID}" \
-                            --region ${AWS_REGION}
+                            --region ${AWS_REGION} || true
 
                         STATUS=\$(aws ssm get-command-invocation \
                             --command-id "\$CMD_ID" \
@@ -289,6 +290,7 @@ EOF
                         cat << EOF > /tmp/ssm-deploy-params.json
 {
   "commands": [
+    "export KUBECONFIG=/etc/kubernetes/admin.conf",
     "mkdir -p /tmp/k8s-deploy",
     "echo '\${MANIFEST_PAYLOAD}' | base64 -d | tar -xzf - -C /tmp/k8s-deploy",
     "kubectl apply -f /tmp/k8s-deploy/configmap.yaml",
@@ -316,7 +318,7 @@ EOF
                         aws ssm wait command-executed \
                             --command-id "\$CMD_ID" \
                             --instance-id "${env.MASTER_INSTANCE_ID}" \
-                            --region ${AWS_REGION}
+                            --region ${AWS_REGION} || true
 
                         STATUS=\$(aws ssm get-command-invocation \
                             --command-id "\$CMD_ID" \
@@ -331,7 +333,7 @@ EOF
                             --instance-id "${env.MASTER_INSTANCE_ID}" \
                             --query "StandardOutputContent" \
                             --output text \
-                            --region ${AWS_REGION}
+                            --region ${AWS_REGION} || true
 
                         if [ "\$STATUS" != "Success" ]; then
                             echo "[ERROR] Deployment failed on Master node:"
@@ -401,6 +403,7 @@ EOF
                         cat << EOF > /tmp/ssm-rollback-params.json
 {
   "commands": [
+    "export KUBECONFIG=/etc/kubernetes/admin.conf",
     "kubectl rollout undo deployment/task-service -n ${K8S_NAMESPACE} || true",
     "kubectl rollout undo deployment/stats-service -n ${K8S_NAMESPACE} || true"
   ]
