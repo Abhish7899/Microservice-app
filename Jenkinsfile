@@ -98,9 +98,9 @@ pipeline {
         }
 
         // ---------------------------------------------------------------------
-        // Stage 2: Parallel Docker Image Build & Push to Amazon ECR
+        // Stage 2: Authenticate Docker to Amazon ECR
         // ---------------------------------------------------------------------
-        stage('Docker Build & Push to ECR') {
+        stage('ECR Login') {
             steps {
                 script {
                     echo "Authenticating Docker CLI to Amazon ECR via IAM Instance Profile..."
@@ -109,8 +109,17 @@ pipeline {
                         docker login --username AWS --password-stdin ${env.ECR_REGISTRY}
                     """
                 }
-                parallel(
-                    "task-service": {
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Stage 3: Parallel Docker Image Build & Push to Amazon ECR
+        // ---------------------------------------------------------------------
+        stage('Docker Build & Push to ECR') {
+            failFast true
+            parallel {
+                stage('Build & Push task-service') {
+                    steps {
                         script {
                             echo "Building and tagging task-service image: ${env.TASK_ECR_URL}:${IMAGE_TAG}"
                             sh """
@@ -118,8 +127,10 @@ pipeline {
                                 docker push ${env.TASK_ECR_URL}:${IMAGE_TAG}
                             """
                         }
-                    },
-                    "stats-service": {
+                    }
+                }
+                stage('Build & Push stats-service') {
+                    steps {
                         script {
                             echo "Building and tagging stats-service image: ${env.STATS_ECR_URL}:${IMAGE_TAG}"
                             sh """
@@ -128,7 +139,7 @@ pipeline {
                             """
                         }
                     }
-                )
+                }
             }
         }
 
