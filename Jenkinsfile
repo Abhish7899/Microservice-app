@@ -177,9 +177,18 @@ pipeline {
                         DB_HOST=\$(echo "${env.RDS_ENDPOINT}" | cut -d: -f1)
                         DB_PORT=\$(echo "${env.RDS_ENDPOINT}" | cut -d: -f2)
 
+                        DB_NAME=\$(aws rds describe-db-instances \
+                            --db-instance-identifier rds-prod-postgres \
+                            --query "DBInstances[0].DBName" \
+                            --output text \
+                            --region ${AWS_REGION})
+                        if [ -z "\$DB_NAME" ] || [ "\$DB_NAME" = "None" ]; then
+                            DB_NAME="taskdb"
+                        fi
+
                         # Encode special characters in password for valid URL construction
                         ENCODED_PASS=\$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "\$DB_PASS" 2>/dev/null || python -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "\$DB_PASS")
-                        DATABASE_URL="postgresql://\${DB_USER}:\${ENCODED_PASS}@\${DB_HOST}:\${DB_PORT}/tasks_db"
+                        DATABASE_URL="postgresql://\${DB_USER}:\${ENCODED_PASS}@\${DB_HOST}:\${DB_PORT}/\${DB_NAME}"
 
                         echo "[INFO] Preparing encoded Kubernetes secret creation payload..."
                         # Base64 encode the values for direct remote execution
@@ -187,7 +196,8 @@ pipeline {
                         B64_DB_USER=\$(echo -n "\$DB_USER" | base64 | tr -d '\n')
                         B64_DB_PASS=\$(echo -n "\$DB_PASS" | base64 | tr -d '\n')
 
-                        REMOTE_SCRIPT="cat << 'EOF' | kubectl apply -f -
+                        # Build the full secret manifest in base64 to eliminate newline and quote escaping issues
+                        B64_SECRET_MANIFEST=\$(cat <<EOF | base64 | tr -d '\n'
 apiVersion: v1
 kind: Secret
 metadata:
@@ -198,17 +208,27 @@ data:
   DATABASE_URL: \${B64_DB_URL}
   POSTGRES_USER: \${B64_DB_USER}
   POSTGRES_PASSWORD: \${B64_DB_PASS}
-EOF"
+EOF
+)
+
+                        cat <<EOF > /tmp/ssm-secret-params.json
+{
+  "commands": [
+    "echo '\${B64_SECRET_MANIFEST}' | base64 -d | kubectl apply -f -"
+  ]
+}
+EOF
 
                         echo "[INFO] Dispatching secret update to Master EC2 via AWS SSM..."
                         CMD_ID=\$(aws ssm send-command \
                             --instance-ids "${env.MASTER_INSTANCE_ID}" \
                             --document-name "AWS-RunShellScript" \
                             --comment "Sync RDS Credentials to K8s Secret" \
-                            --parameters commands="[\"\$REMOTE_SCRIPT\"]" \
+                            --parameters file:///tmp/ssm-secret-params.json \
                             --query "Command.CommandId" \
                             --output text \
                             --region ${AWS_REGION})
+                        rm -f /tmp/ssm-secret-params.json
 
                         aws ssm wait command-executed \
                             --command-id "\$CMD_ID" \
@@ -222,6 +242,14 @@ EOF"
                             --output text \
                             --region ${AWS_REGION})
 
+                        echo "Secret sync execution status: \$STATUS"
+                        aws ssm get-command-invocation \
+                            --command-id "\$CMD_ID" \
+                            --instance-id "${env.MASTER_INSTANCE_ID}" \
+                            --query "StandardOutputContent" \
+                            --output text \
+                            --region ${AWS_REGION} || true
+
                         if [ "\$STATUS" != "Success" ]; then
                             echo "[ERROR] SSM Command failed with status \$STATUS"
                             aws ssm get-command-invocation \
@@ -229,7 +257,7 @@ EOF"
                                 --instance-id "${env.MASTER_INSTANCE_ID}" \
                                 --query "StandardErrorContent" \
                                 --output text \
-                                --region ${AWS_REGION}
+                                --region ${AWS_REGION} || true
                             exit 1
                         fi
 
@@ -258,24 +286,31 @@ EOF"
                         MANIFEST_PAYLOAD=\$(tar -czf - -C /tmp/k8s-rendered . | base64 | tr -d '\n')
 
                         echo "Dispatching deployment and rollout verification to Master EC2 via AWS SSM..."
+                        cat << EOF > /tmp/ssm-deploy-params.json
+{
+  "commands": [
+    "mkdir -p /tmp/k8s-deploy",
+    "echo '\${MANIFEST_PAYLOAD}' | base64 -d | tar -xzf - -C /tmp/k8s-deploy",
+    "kubectl apply -f /tmp/k8s-deploy/configmap.yaml",
+    "kubectl apply -f /tmp/k8s-deploy/task-service.yaml",
+    "kubectl apply -f /tmp/k8s-deploy/stats-service.yaml",
+    "kubectl apply -f /tmp/k8s-deploy/ingress.yaml",
+    "kubectl rollout status deployment/task-service -n ${K8S_NAMESPACE} --timeout=180s",
+    "kubectl rollout status deployment/stats-service -n ${K8S_NAMESPACE} --timeout=180s",
+    "rm -rf /tmp/k8s-deploy"
+  ]
+}
+EOF
+
                         CMD_ID=\$(aws ssm send-command \
                             --instance-ids "${env.MASTER_INSTANCE_ID}" \
                             --document-name "AWS-RunShellScript" \
                             --comment "Stage 3 Kubernetes Application Deployment" \
-                            --parameters commands="[
-                                \"mkdir -p /tmp/k8s-deploy\",
-                                \"echo '\$MANIFEST_PAYLOAD' | base64 -d | tar -xzf - -C /tmp/k8s-deploy\",
-                                \"kubectl apply -f /tmp/k8s-deploy/configmap.yaml\",
-                                \"kubectl apply -f /tmp/k8s-deploy/task-service.yaml\",
-                                \"kubectl apply -f /tmp/k8s-deploy/stats-service.yaml\",
-                                \"kubectl apply -f /tmp/k8s-deploy/ingress.yaml\",
-                                \"kubectl rollout status deployment/task-service -n ${K8S_NAMESPACE} --timeout=180s\",
-                                \"kubectl rollout status deployment/stats-service -n ${K8S_NAMESPACE} --timeout=180s\",
-                                \"rm -rf /tmp/k8s-deploy\"
-                            ]" \
+                            --parameters file:///tmp/ssm-deploy-params.json \
                             --query "Command.CommandId" \
                             --output text \
                             --region ${AWS_REGION})
+                        rm -f /tmp/ssm-deploy-params.json
 
                         echo "Waiting for SSM deployment command execution (Command ID: \$CMD_ID)..."
                         aws ssm wait command-executed \
@@ -363,15 +398,21 @@ EOF"
                 sh """
                     if [ -n "${env.MASTER_INSTANCE_ID}" ] && [ "${env.MASTER_INSTANCE_ID}" != "None" ]; then
                         echo "Triggering kubectl rollout undo via AWS SSM..."
+                        cat << EOF > /tmp/ssm-rollback-params.json
+{
+  "commands": [
+    "kubectl rollout undo deployment/task-service -n ${K8S_NAMESPACE} || true",
+    "kubectl rollout undo deployment/stats-service -n ${K8S_NAMESPACE} || true"
+  ]
+}
+EOF
                         aws ssm send-command \
                             --instance-ids "${env.MASTER_INSTANCE_ID}" \
                             --document-name "AWS-RunShellScript" \
                             --comment "Automated Rollback on Deployment Failure" \
-                            --parameters commands="[
-                                \"kubectl rollout undo deployment/task-service -n ${K8S_NAMESPACE}\",
-                                \"kubectl rollout undo deployment/stats-service -n ${K8S_NAMESPACE}\"
-                            ]" \
+                            --parameters file:///tmp/ssm-rollback-params.json \
                             --region ${AWS_REGION} || true
+                        rm -f /tmp/ssm-rollback-params.json || true
                     fi
                 """
             }
